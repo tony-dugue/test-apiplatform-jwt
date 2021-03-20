@@ -1,0 +1,46 @@
+# on utilise une image Docker (php en version ligne de commande)
+image: php:7.4-cli
+
+# Avant de lancer le test Newman, on va faire un certain nombre de chose
+
+before_script:
+  # comme l'image est basé sur du Debian, on installe git libzip et wget
+  - apt-get update && apt-get install -y git libzip-dev npm wget
+  # on récupère composer et on l'installe
+  - curl -sSk https://getcomposer.org/installer | php -- --disable-tls && mv composer.phar /usr/local/bin/composer
+  # on installe une extension php pour pouvoir installer zip
+  - docker-php-ext-install zip
+  # on installe la CLI de Symfony (utile pour lancer le server de Symfony)
+  - wget https://get.symfony.com/cli/installer -O - | bash
+  # on explique que l'on veut rendre la CLI de Symfony utilisable sur tous le système
+  - mv /root/.symfony/bin/symfony /usr/local/bin/symfony
+  # on installe newman
+  - npm install -g newman
+  # on fait un composer install
+  - composer install
+  # on renomme les fichiers private_test.pem en private.pem (idem pour public) comme ça on n'a pas besoin de toucher à
+  # la configuration dans .env
+  - mv ./config/jwt/private_test.pem ./config/jwt/private.pem && mv ./config/jwt/public_test.pem ./config/jwt/public.pem
+  # on installe les certificats pour faire fonctionner le serveur interne de Symfony et on le lance
+  - symfony server:ca:install && symfony serve -d
+  # on crée la base de données
+  - php bin/console doctrine:database:create --env=test
+  # on migre les données
+  - php bin/console doctrine:migration:migrate --env=test --no-interaction
+
+# on met en cache tout ce qui se trouve dans Vendor pour accélérer le processus les fois suivantes
+cache:
+  paths:
+    - vendor/
+
+# on décrit le nombre d'étapes à faire dans le pipeline (une seule ici)
+stages:
+  - TestAPI
+
+# on lance newman qui s'exécute au moment de l'étape TestAPI en lui indiquant ce qu'il doit allow_failure
+# et on lui dit qu'il n'a pas le droit d'échouer (allow_failure)
+Newman:
+  stage: TestAPI
+  script:
+    - newman run ./postman/postman_collection.json -e ./postman/postman_environment.json
+  allow_failure: false
